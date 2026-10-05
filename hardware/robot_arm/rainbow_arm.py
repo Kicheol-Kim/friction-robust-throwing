@@ -58,6 +58,19 @@ class RobotController:
             target = np.array(pose, dtype=np.float64)
             self.robot.move_l(rc, target, speed, acc)
 
+    def get_tcp_position(self):
+        """현재 TCP의 X, Y, Z 좌표를 Numpy 배열로 반환합니다."""
+        if self.robot:
+            try:
+                # rbpodo API 버전에 따라 함수명이 get_tcp_pose, get_kinematics_info 등일 수 있습니다.
+                if hasattr(self.robot, 'get_tcp_pose'):
+                    pose = self.robot.get_tcp_pose()
+                    return np.array(pose[0:3])
+            except Exception as e:
+                print(f"TCP 위치 읽기 실패: {e}")
+        # 가상 모드이거나 에러 발생 시 더미 데이터 반환
+        return np.array([0.0, 0.0, 0.0])
+
     def stop_immediately(self):
         if self.robot:
             try:

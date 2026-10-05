@@ -7,8 +7,8 @@ import time
 
 from config.settings import DEFAULT_ROBOT_IP, DEFAULT_CAN_PORT
 from core.state_manager import event_queue, shared_state
-from hardware.ak60_motor import MotorController
-from hardware.rainbow_arm import RobotController
+from end_effector.ak60_motor import MotorController
+from robot_arm.rainbow_arm import RobotController
 
 class ThrowSimulatorGUI:
     def __init__(self, root):
@@ -86,12 +86,12 @@ class ThrowSimulatorGUI:
         
         tk.Label(arm_frame, text="시작점 (Start):").grid(row=0, column=0, sticky="w")
         self.start_entry = tk.Entry(arm_frame, width=35)
-        self.start_entry.insert(0, "400.0, 0.0, 300.0, 180.0, 0.0, 0.0")
+        self.start_entry.insert(0, "-750.0, 400.0, 200.0, -180.0, 0.0, 0.0")
         self.start_entry.grid(row=0, column=1)
         
         tk.Label(arm_frame, text="도착점 (End):").grid(row=1, column=0, sticky="w")
         self.end_entry = tk.Entry(arm_frame, width=35)
-        self.end_entry.insert(0, "600.0, 0.0, 500.0, 180.0, 0.0, 0.0")
+        self.end_entry.insert(0, "750.0, 400.0, 200.0, -180.0, 0.0, 0.0")
         self.end_entry.grid(row=1, column=1)
         
         tk.Label(arm_frame, text="이동 속도 (mm/s):").grid(row=2, column=0, sticky="w")

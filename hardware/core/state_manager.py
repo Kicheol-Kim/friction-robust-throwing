@@ -13,6 +13,11 @@ class RobotState:
     op_mode: str = "simulation"
     playback_speed: float = 1.0
 
+    is_logging: bool = False
+    log_time: list = field(default_factory=list)
+    log_linear_vel: list = field(default_factory=list)
+    log_j6_vel: list = field(default_factory=list)
+
 # UI 스레드와 하드웨어 스레드 간의 안전한 통신을 위한 이벤트 큐
 event_queue = queue.Queue()
 

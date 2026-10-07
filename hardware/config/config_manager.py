@@ -5,7 +5,6 @@ import os
 
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "user_settings.json")
 
-# 최초 실행 시 적용될 기본 메타데이터
 DEFAULT_METADATA = {
     "script_name": "main_side_throw.py",
     "robot_ip": "192.168.0.25",
@@ -15,12 +14,15 @@ DEFAULT_METADATA = {
     "start_pose": "-750.0, 400.0, 200.0, -180.0, 0.0, 0.0",
     "end_pose": "750.0, 400.0, 200.0, -180.0, 0.0, 0.0",
     "arm_speed": 200.0,
+    "motor_start_pos": 0.0,
+    "motor_rotation_amount": 3.14,
     "motor_target_vel": 10.0,
+    "motor_kp": 30.0,  # 추가됨: 위치 게인
+    "motor_kd": 2.0,   # 추가됨: 속도 게인
     "enable_logging": False
 }
 
 def load_metadata():
-    """저장된 JSON 설정 파일에서 메타데이터를 불러옵니다. 없으면 기본값을 반환합니다."""
     if not os.path.exists(CONFIG_FILE):
         return DEFAULT_METADATA.copy()
     try:
@@ -31,7 +33,6 @@ def load_metadata():
         return DEFAULT_METADATA.copy()
 
 def save_metadata(metadata):
-    """현재 UI 상태의 메타데이터를 JSON 파일로 덮어씌워 저장합니다."""
     try:
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=4, ensure_ascii=False)

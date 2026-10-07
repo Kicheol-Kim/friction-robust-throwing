@@ -1,0 +1,16 @@
+{
+    "script_name": "main_side_throw.py",
+    "robot_ip": "192.168.0.25",
+    "can_port": "/dev/ttyACM1",
+    "op_mode": "real",
+    "playback_speed": 1.0,
+    "start_pose": "0.0, 400.0, 200.0, -180.0, 0.0, 0.0",
+    "end_pose": "0.0, 400.0, 200.0, -180.0, 0.0, 0.0",
+    "arm_speed": 300.0,
+    "motor_target_vel": 5.0,
+    "enable_logging": false,
+    "motor_start_pos": 0.0,
+    "motor_rotation_amount": 10.0,
+    "motor_kp": 10.0,
+    "motor_kd": 2.0
+}

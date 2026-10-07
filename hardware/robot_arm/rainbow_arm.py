@@ -1,6 +1,5 @@
 # hardware/rainbow_arm.py
 
-import time
 import numpy as np
 from core.state_manager import event_queue, shared_state
 
@@ -32,6 +31,13 @@ class RobotController:
         else:
             shared_state.arm_connected = True
             event_queue.put({"type": "STATUS", "msg": "가상 로봇팔 모드 (rbpodo 없음)", "color": "green"})
+
+    def disconnect(self):
+        if self.robot:
+            self.stop_immediately()
+        self.robot = None
+        shared_state.arm_connected = False
+        event_queue.put({"type": "STATUS", "msg": "로봇팔 연결 해제됨", "color": "blue"})
 
     def set_op_mode(self, mode_str):
         shared_state.op_mode = mode_str

@@ -87,23 +87,30 @@ class MotorController:
         self.is_enabled = False
         self.running = False
         self.thread = None
+        self._lifecycle_lock = threading.Lock()
 
     def connect(self, port="/dev/ttyACM0", bustype='slcan'):
-        if self.bus:
-            event_queue.put({"type": "STATUS", "msg": "모터가 이미 연결되어 있습니다.", "color": "green"})
-            return
+        with self._lifecycle_lock:
+            if self.bus:
+                event_queue.put({"type": "STATUS", "msg": "모터가 이미 연결되어 있습니다.", "color": "green"})
+                return
 
-        try:
-            self.bus = can.interface.Bus(bustype=bustype, channel=port, bitrate=1000000)
-            self.running = True
-            self.thread = threading.Thread(target=self._io_loop, daemon=True)
-            self.thread.start()
-            
-            shared_state.motor_connected = True
-            event_queue.put({"type": "STATUS", "msg": f"모터({port}) 연결 완료", "color": "green"})
-        except Exception as e:
-            shared_state.motor_connected = False
-            event_queue.put({"type": "ERROR", "title": "모터 연결 오류", "msg": f"CAN 포트 연결 실패:\n{e}"})
+            try:
+                bus = can.interface.Bus(bustype=bustype, channel=port, bitrate=1000000)
+                self.bus = bus
+                self.running = True
+                self.thread = threading.Thread(target=self._io_loop, daemon=True)
+                self.thread.start()
+                shared_state.motor_connected = True
+                event_queue.put({"type": "STATUS", "msg": f"모터({port}) 연결 완료", "color": "green"})
+            except Exception as e:
+                self.running = False
+                self.thread = None
+                self.bus = None
+                shared_state.motor_connected = False
+                if "bus" in locals():
+                    bus.shutdown()
+                event_queue.put({"type": "ERROR", "title": "모터 연결 오류", "msg": f"CAN 포트 연결 실패:\n{e}"})
 
     def enable(self):
         self.is_enabled = True
@@ -123,14 +130,24 @@ class MotorController:
         self.disable()
 
     def disconnect(self):
-        self.running = False
-        if self.thread:
-            self.thread.join(timeout=1.0)
-        self.disable()
-        if self.bus:
-            self.bus.shutdown()
-            self.bus = None
-        shared_state.motor_connected = False
+        with self._lifecycle_lock:
+            shared_state.motor_running = False
+            self.running = False
+            thread = self.thread
+            if thread and thread is not threading.current_thread():
+                thread.join()
+
+            try:
+                try:
+                    self.disable()
+                finally:
+                    if self.bus:
+                        self.bus.shutdown()
+            finally:
+                self.thread = None
+                self.bus = None
+                self.is_enabled = False
+                shared_state.motor_connected = False
 
     def set_gains_and_targets(self, p, v, kp, kd, t=0.0):
         self.p_des = p

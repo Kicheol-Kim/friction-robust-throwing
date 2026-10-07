@@ -7,10 +7,10 @@
     "start_pose": "0.0, 400.0, 200.0, -180.0, 0.0, 0.0",
     "end_pose": "0.0, 400.0, 200.0, -180.0, 0.0, 0.0",
     "arm_speed": 300.0,
-    "motor_target_vel": 5.0,
+    "motor_target_vel": 7.0,
     "enable_logging": false,
-    "motor_start_pos": 0.0,
-    "motor_rotation_amount": 10.0,
-    "motor_kp": 10.0,
-    "motor_kd": 2.0
+    "motor_start_pos": 4.0,
+    "motor_rotation_amount": 31.4,
+    "motor_kp": 5.0,
+    "motor_kd": 5.0
 }

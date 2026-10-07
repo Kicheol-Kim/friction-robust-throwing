@@ -16,10 +16,14 @@ def main():
     
     # 4. 종료 시 메타데이터 저장 안전장치
     def on_closing():
-        app._update_metadata_from_ui()
-        save_metadata(app.current_meta)
-        manager.stop_all()
-        root.destroy()
+        try:
+            try:
+                app._update_metadata_from_ui()
+                save_metadata(app.current_meta)
+            finally:
+                manager.disconnect_all()
+        finally:
+            root.destroy()
         
     root.protocol("WM_DELETE_WINDOW", on_closing)
     root.mainloop()

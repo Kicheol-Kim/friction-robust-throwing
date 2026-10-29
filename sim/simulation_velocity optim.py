@@ -6,14 +6,14 @@ import matplotlib.pyplot as plt
 # 1. 시스템 파라미터 세팅
 # ==========================================
 L = 0.3
-omega = 8
-r0 = 0.03
+omega = 4
+r0 = 0.2
 theta0 = np.pi
 z_goal = -0.915
 g = 9.81
 mu_min = 0.1
-mu_max = 0.3
-num_samples = 21
+mu_max = 0.25
+num_samples = 25
 
 t_flight = np.sqrt(2 * abs(z_goal) / g)
 # mu_list = np.linspace(0.0, 1.0, 101)

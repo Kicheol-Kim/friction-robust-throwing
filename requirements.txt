@@ -1,0 +1,9 @@
+gymnasium
+matplotlib
+mujoco
+numpy
+pandas
+python-can
+scipy
+stable-baselines3
+rbpodo

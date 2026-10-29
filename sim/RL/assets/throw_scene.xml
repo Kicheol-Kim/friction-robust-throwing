@@ -1,0 +1,91 @@
+<mujoco model="friction_robust_throwing">
+    <!-- 시뮬레이션 기본 설정: 200Hz(0.005s), 중력, 마찰 콘 설정 -->
+    <compiler angle="radian" meshdir="meshes/rb5_850e_u/collision/"/>
+    <option timestep="0.005" gravity="0 0 -9.81" cone="elliptic"/>
+
+    <!-- 1. 레인보우 로봇팔 URDF 불러오기 -->
+    <!-- 보유하신 깃허브의 urdf 파일명에 맞춰 수정하세요 (예: rb10_1300e.urdf) -->
+    <include file="meshes/rb5_850e_u/collision/rb5_850e.xml"/>
+
+    <!-- 2. 시각화를 위한 재질 및 바닥 설정 -->
+    <asset>
+        <material name="mat_gripper" rgba="0.25 0.25 0.25 1"/>
+        <material name="mat_proj_box" rgba="0.8 0.2 0.2 1"/>
+        <material name="mat_proj_sphere" rgba="0.2 0.8 0.2 1"/>
+        <material name="mat_proj_cylinder" rgba="0.2 0.2 0.8 1"/>
+        <texture type="2d" name="tex_floor" builtin="checker" rgb1="0.8 0.8 0.8" rgb2="0.6 0.6 0.6" width="512" height="512"/>
+        <material name="mat_floor" texture="tex_floor" texrepeat="5 5"/>
+    </asset>
+
+    <default>
+        <!-- 시뮬레이션 뚫림(Tunneling) 방지를 위한 충돌 여유 공간(margin) 설정 -->
+        <geom margin="0.001" solref="0.005 1"/>
+    </default>
+
+    <worldbody>
+        <!-- 바닥 -->
+        <geom name="ground" type="plane" size="3 3 0.1" material="mat_floor" pos="0 0 0"/>
+
+        <!-- 3. Mocap 바디 (Cartesian 궤적 제어기) -->
+        <!-- 파이썬에서 이 빨간 점(Mocap)의 속도를 제어하면, 로봇팔이 부드럽게 역기구학을 풀며 따라옵니다 -->
+        <body name="target_tcp_mocap" mocap="true" pos="0.5 0 0.5">
+            <geom type="box" size="0.02 0.02 0.02" contype="0" conaffinity="0" rgba="1 0 0 0.3"/>
+        </body>
+
+        <!-- 4. 투척기 어셈블리 (모터 + U자형 채널) -->
+        <body name="thrower_assembly" pos="0.5 0 0.5">
+            <!-- AK60-6 투척 모터 조인트 (Y축 회전) -->
+            <joint name="ak60_motor" type="hinge" axis="0 1 0" damping="0.05" frictionloss="0.01"/>
+
+            <!-- 50x50x300mm U자형 채널 (MuJoCo의 size는 절반 크기인 Half-extents 기준입니다) -->
+            <!-- 뚫림 에러 방지를 위해 벽 두께를 8mm로 설정 (내부 공간: 34x42mm -> 30mm 물체가 넉넉히 미끄러짐) -->
+            
+            <!-- 바닥 판 (두께 8mm) -->
+            <geom name="gripper_bottom" type="box" size="0.15 0.025 0.004" pos="0.15 0 -0.004" material="mat_gripper" friction="0.3 0.01 0.0001"/>
+            <!-- 왼쪽 벽 -->
+            <geom name="gripper_left" type="box" size="0.15 0.004 0.021" pos="0.15 0.021 0.021" material="mat_gripper" friction="0.3 0.01 0.0001"/>
+            <!-- 오른쪽 벽 -->
+            <geom name="gripper_right" type="box" size="0.15 0.004 0.021" pos="0.15 -0.021 0.021" material="mat_gripper" friction="0.3 0.01 0.0001"/>
+        </body>
+
+        <!-- 5. 투사체 (30mm 물체들) -->
+        <!-- 아래 세 가지 중 테스트할 물체 하나만 주석을 해제해서 사용하세요 -->
+
+        <!-- A. 30mm 정육면체 (질량 50g 예시) -->
+        <body name="projectile_ball" pos="0.55 0 0.515">
+            <freejoint/> <!-- 물체가 허공을 날아다닐 수 있게 하는 자유 조인트 -->
+            <geom name="proj_geom" type="box" size="0.015 0.015 0.015" material="mat_proj_box" mass="0.05" friction="0.3 0.01 0.0001"/>
+        </body>
+
+        <!-- B. 30mm 구 (주석 해제 시 사용 가능) -->
+        <!--
+        <body name="projectile_ball" pos="0.55 0 0.515">
+            <freejoint/>
+            <geom name="proj_geom" type="sphere" size="0.015" material="mat_proj_sphere" mass="0.05" friction="0.3 0.01 0.0001"/>
+        </body>
+        -->
+
+        <!-- C. 30mm 원기둥 (주석 해제 시 사용 가능) -->
+        <!--
+        <body name="projectile_ball" pos="0.55 0 0.515">
+            <freejoint/>
+            <geom name="proj_geom" type="cylinder" size="0.015 0.015" material="mat_proj_cylinder" mass="0.05" friction="0.3 0.01 0.0001"/>
+        </body>
+        -->
+    </worldbody>
+
+    <equality>
+        <!-- [마법의 꼼수 1] 투척기 어셈블리를 로봇팔 끝단(link6)에 쇠땜(Weld)하여 강체로 결합 -->
+        <weld name="mount_thrower" body1="link6" body2="thrower_assembly"/>
+        
+        <!-- [마법의 꼼수 2] Mocap 바디와 로봇팔 끝단을 스프링-댐퍼 모델로 용접 -->
+        <!-- 파이썬에서 Mocap을 움직이면, 로봇팔이 자연스러운 관성과 함께 Mocap을 따라갑니다 (Cartesian PID 제어기 역할) -->
+        <weld name="tcp_tracker" body1="target_tcp_mocap" body2="link6" solref="0.02 1" solimp="0.9 0.95 0.001"/>
+    </equality>
+
+    <actuator>
+        <!-- AK60-6 모터 제어용 액추에이터 (최대 토크 +-12Nm) -->
+        <!-- 파이썬에서 속도 제어(Kd=2.0)를 할 때 이 모터에 피드백 토크를 인가하게 됩니다 -->
+        <motor name="ak60_torque" joint="ak60_motor" ctrlrange="-12.0 12.0"/>
+    </actuator>
+</mujoco>

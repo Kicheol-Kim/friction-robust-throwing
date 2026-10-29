@@ -8,16 +8,21 @@ from pathlib import Path
 
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
+import mujoco
 import numpy as np
 import pandas as pd
-import mujoco
+from matplotlib.patches import Ellipse
+from matplotlib.widgets import Button, Slider
 
 from mujoco_throwing_env import MujocoThrowingEnv
 
 
 ACTION_COLUMNS = ("Cmd_VelX(m/s)", "Cmd_VelY(m/s)", "Cmd_VelZ(m/s)")
+POSITION_COLUMNS = ("TCP_PosX(m)", "TCP_PosY(m)", "TCP_PosZ(m)")
+VELOCITY_COLUMNS = ("TCP_VelX(m/s)", "TCP_VelY(m/s)", "TCP_VelZ(m/s)")
 TIME_COLUMN = "Time(s)"
 DEFAULT_TARGET = (1.65, 0.0, 0.5)
+AXIS_COLORS = ("tab:blue", "tab:orange", "tab:green")
 
 
 @dataclass(frozen=True)
@@ -26,6 +31,8 @@ class SimulationResult:
     times: np.ndarray
     positions: np.ndarray
     impact: np.ndarray | None
+    tcp_positions: np.ndarray
+    qpos: np.ndarray
 
 
 def get_latest_trajectory_file() -> Path:
@@ -61,7 +68,12 @@ def load_trajectory(path: Path) -> tuple[pd.DataFrame, dict[str, str]]:
             metadata[key.strip()] = value.strip()
 
     frame = pd.read_csv(path, skiprows=header_index)
-    required_columns = (TIME_COLUMN, *ACTION_COLUMNS)
+    required_columns = (
+        TIME_COLUMN,
+        *POSITION_COLUMNS,
+        *VELOCITY_COLUMNS,
+        *ACTION_COLUMNS,
+    )
     missing_columns = [column for column in required_columns if column not in frame]
     if missing_columns:
         raise ValueError(f"Trajectory CSV is missing columns: {', '.join(missing_columns)}")
@@ -74,16 +86,19 @@ def load_trajectory(path: Path) -> tuple[pd.DataFrame, dict[str, str]]:
         raise ValueError(f"Trajectory CSV contains non-finite times or actions: {path}")
     if np.any(np.diff(frame[TIME_COLUMN].to_numpy()) <= 0):
         raise ValueError(f"Trajectory timestamps are not strictly increasing: {path}")
-
     return frame, metadata
 
 
-def parse_target(metadata: dict[str, str], override: tuple[float, ...] | None) -> np.ndarray:
+def parse_target(
+    metadata: dict[str, str], override: tuple[float, ...] | None
+) -> np.ndarray:
     if override is not None:
         target = np.asarray(override, dtype=np.float64)
     elif "Target_Pos_XYZ" in metadata:
         try:
-            target = np.asarray(ast.literal_eval(metadata["Target_Pos_XYZ"]), dtype=np.float64)
+            target = np.asarray(
+                ast.literal_eval(metadata["Target_Pos_XYZ"]), dtype=np.float64
+            )
         except (ValueError, SyntaxError) as error:
             raise ValueError("Invalid Target_Pos_XYZ value in trajectory metadata") from error
     else:
@@ -94,12 +109,15 @@ def parse_target(metadata: dict[str, str], override: tuple[float, ...] | None) -
     return target
 
 
-def has_ground_contact(env: MujocoThrowingEnv, ground_geom_id: int, projectile_geom_id: int) -> bool:
-    for contact_index in range(env.data.ncon):
-        contact = env.data.contact[contact_index]
-        if {contact.geom1, contact.geom2} == {ground_geom_id, projectile_geom_id}:
-            return True
-    return False
+def set_equal_3d_limits(axes: plt.Axes, points: np.ndarray) -> None:
+    minimum = np.min(points, axis=0)
+    maximum = np.max(points, axis=0)
+    center = (minimum + maximum) / 2.0
+    half_span = max(float(np.max(maximum - minimum)) / 2.0, 0.1) * 1.05
+    axes.set_xlim(center[0] - half_span, center[0] + half_span)
+    axes.set_ylim(center[1] - half_span, center[1] + half_span)
+    axes.set_zlim(center[2] - half_span, center[2] + half_span)
+    axes.set_box_aspect((1, 1, 1))
 
 
 def simulate_trajectory(
@@ -107,38 +125,46 @@ def simulate_trajectory(
     actions: np.ndarray,
     friction: float,
     max_flight_seconds: float,
-    ground_geom_id: int,
-    projectile_geom_id: int,
     seed: int,
 ) -> SimulationResult:
     env.reset(seed=seed)
-    for geom_id in env.gripper_geom_ids:
-        env.model.geom_friction[geom_id, 0] = friction
+    env.model.geom_friction[env.gripper_geom_ids, 0] = friction
 
     positions = [env.data.xpos[env.ball_body_id].copy()]
     times = [float(env.data.time)]
+    tcp_positions = [env.data.xpos[env.tcp_body_id].copy()]
+    qpos_frames = [env.data.qpos.copy()]
     impact_position: np.ndarray | None = None
 
     for action in actions:
-        env.step(action)
+        _, _, terminated, _, _ = env.step(action)
         positions.append(env.data.xpos[env.ball_body_id].copy())
         times.append(float(env.data.time))
-        if has_ground_contact(env, ground_geom_id, projectile_geom_id):
+        tcp_positions.append(env.data.xpos[env.tcp_body_id].copy())
+        qpos_frames.append(env.data.qpos.copy())
+        if terminated:
             impact_position = positions[-1].copy()
             break
 
     if impact_position is None:
         max_tail_steps = int(np.ceil(max_flight_seconds / env.dt))
-        motor_dof = env.model.jnt_dofadr[env.motor_joint_id]
         for _ in range(max_tail_steps):
-            motor_velocity = env.data.qvel[motor_dof]
+            env.data.qpos[env.robot_qpos_ids] = env.joint_targets
+            env.data.qvel[env.robot_dof_ids] = 0.0
+            mujoco.mj_forward(env.model, env.data)
+            motor_velocity = env.data.qvel[env.motor_dof_id]
             env.data.ctrl[env.motor_act_id] = np.clip(
                 2.0 * (env.omega_motor - motor_velocity), -12.0, 12.0
             )
             mujoco.mj_step(env.model, env.data)
+            env.data.qpos[env.robot_qpos_ids] = env.joint_targets
+            env.data.qvel[env.robot_dof_ids] = 0.0
+            mujoco.mj_forward(env.model, env.data)
             positions.append(env.data.xpos[env.ball_body_id].copy())
             times.append(float(env.data.time))
-            if has_ground_contact(env, ground_geom_id, projectile_geom_id):
+            tcp_positions.append(env.data.xpos[env.tcp_body_id].copy())
+            qpos_frames.append(env.data.qpos.copy())
+            if env._has_ground_contact():
                 impact_position = positions[-1].copy()
                 break
 
@@ -147,7 +173,123 @@ def simulate_trajectory(
         times=np.asarray(times),
         positions=np.asarray(positions),
         impact=impact_position,
+        tcp_positions=np.asarray(tcp_positions),
+        qpos=np.asarray(qpos_frames),
     )
+
+
+def build_animation_window(
+    model: mujoco.MjModel, result: SimulationResult
+) -> tuple[plt.Figure, animation.FuncAnimation]:
+    render_data = mujoco.MjData(model)
+    renderer = mujoco.Renderer(model, height=480, width=640)
+    mocap_body_id = mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_BODY, "target_tcp_mocap"
+    )
+    mocap_id = int(model.body_mocapid[mocap_body_id])
+    camera = mujoco.MjvCamera()
+    mujoco.mjv_defaultCamera(camera)
+    camera.type = mujoco.mjtCamera.mjCAMERA_FREE
+
+    scene_points = np.concatenate((result.positions, result.tcp_positions), axis=0)
+    minimum = scene_points.min(axis=0)
+    maximum = scene_points.max(axis=0)
+    camera.lookat[:] = (minimum + maximum) / 2.0
+    camera.distance = max(float(np.max(maximum - minimum)) + 1.8, 2.5)
+    camera.azimuth = 135
+    camera.elevation = -20
+
+    figure, axes = plt.subplots(figsize=(11, 7))
+    figure.suptitle("MuJoCo robot and side-arm throwing replay")
+    axes.axis("off")
+    figure.subplots_adjust(bottom=0.18, top=0.88)
+
+    render_data.qpos[:] = result.qpos[0]
+    mujoco.mj_forward(model, render_data)
+    renderer.update_scene(render_data, camera=camera)
+    image = axes.imshow(renderer.render())
+    frame_count = len(result.qpos)
+    slider_axes = figure.add_axes((0.10, 0.07, 0.56, 0.04))
+    frame_slider = Slider(
+        slider_axes,
+        "Frame",
+        valmin=0,
+        valmax=max(frame_count - 1, 1),
+        valinit=0,
+        valstep=1,
+    )
+    play_axes = figure.add_axes((0.72, 0.055, 0.11, 0.07))
+    replay_axes = figure.add_axes((0.85, 0.055, 0.11, 0.07))
+    play_button = Button(play_axes, "Pause")
+    replay_button = Button(replay_axes, "Replay")
+    state = {"frame": 0, "playing": True, "closed": False}
+
+    def render_frame(frame_index: int, update_slider: bool = True):
+        index = min(max(int(frame_index), 0), frame_count - 1)
+        render_data.qpos[:] = result.qpos[index]
+        render_data.mocap_pos[mocap_id] = result.tcp_positions[index]
+        render_data.mocap_quat[mocap_id] = (1.0, 0.0, 0.0, 0.0)
+        mujoco.mj_forward(model, render_data)
+        renderer.update_scene(render_data, camera=camera)
+        image.set_data(renderer.render())
+        axes.set_title(
+            f"t={result.times[index]:.2f} s | friction μ={result.mu:.2f}"
+        )
+        state["frame"] = index
+        if update_slider:
+            frame_slider.eventson = False
+            frame_slider.set_val(index)
+            frame_slider.eventson = True
+        figure.canvas.draw_idle()
+        return (image,)
+
+    def on_slider_change(value: float):
+        if state["playing"]:
+            playback.event_source.stop()
+            state["playing"] = False
+            play_button.label.set_text("Play")
+        render_frame(round(value), update_slider=False)
+
+    playback = animation.FuncAnimation(
+        figure,
+        render_frame,
+        frames=range(frame_count),
+        interval=20,
+        blit=False,
+        repeat=False,
+    )
+    frame_slider.on_changed(on_slider_change)
+
+    def on_play_pause(_event):
+        state["playing"] = not state["playing"]
+        if state["playing"]:
+            playback.event_source.start()
+            play_button.label.set_text("Pause")
+        else:
+            playback.event_source.stop()
+            play_button.label.set_text("Play")
+
+    def on_replay(_event):
+        state["playing"] = True
+        playback.frame_seq = playback.new_frame_seq()
+        frame_slider.set_val(0)
+        play_button.label.set_text("Pause")
+        playback.event_source.start()
+
+    def on_close(_event):
+        if not state["closed"]:
+            renderer.close()
+            state["closed"] = True
+
+    play_button.on_clicked(on_play_pause)
+    replay_button.on_clicked(on_replay)
+    figure.canvas.mpl_connect("close_event", on_close)
+    render_frame(0)
+    figure._mujoco_renderer = renderer
+    figure._mujoco_render_data = render_data
+    figure._trajectory_animation = playback
+    figure._animation_controls = (frame_slider, play_button, replay_button)
+    return figure, playback
 
 
 def build_analysis_plot(
@@ -156,23 +298,46 @@ def build_analysis_plot(
     simulations: list[SimulationResult],
     trajectory_name: str,
     output_path: Path,
-    show: bool,
-) -> None:
-    fig = plt.figure(figsize=(16, 10))
-    fig.suptitle(f"MuJoCo replay and ground-impact analysis\n{trajectory_name}", fontsize=14)
-    command_axes = fig.add_subplot(2, 2, 1)
-    flight_axes = fig.add_subplot(2, 2, 2, projection="3d")
-    landing_axes = fig.add_subplot(2, 2, 3)
-    error_axes = fig.add_subplot(2, 2, 4)
+) -> plt.Figure:
+    figure = plt.figure(figsize=(20, 7.5))
+    figure.suptitle(
+        f"Saved TCP trajectory and MuJoCo throw analysis\n{trajectory_name}",
+        fontsize=14,
+    )
+    grid = figure.add_gridspec(1, 3, width_ratios=(1.15, 1.25, 1.15))
+    tcp_axes = figure.add_subplot(grid[0, 0])
+    position_axes = tcp_axes.twinx()
+    flight_axes = figure.add_subplot(grid[0, 1], projection="3d")
+    landing_axes = figure.add_subplot(grid[0, 2])
 
     time_values = frame[TIME_COLUMN].to_numpy()
-    for column, label in zip(ACTION_COLUMNS, ("X", "Y", "Z")):
-        command_axes.plot(time_values, frame[column], label=f"Command {label}")
-    command_axes.set_title("Recorded TCP velocity commands")
-    command_axes.set_xlabel("Time (s)")
-    command_axes.set_ylabel("Velocity (m/s)")
-    command_axes.grid(True, linestyle="--", alpha=0.5)
-    command_axes.legend()
+    handles = []
+    for velocity_column, position_column, label, color in zip(
+        VELOCITY_COLUMNS, POSITION_COLUMNS, ("X", "Y", "Z"), AXIS_COLORS
+    ):
+        velocity_line, = tcp_axes.plot(
+            time_values,
+            frame[velocity_column],
+            color=color,
+            linestyle="-",
+            linewidth=1.6,
+            label=f"{label} velocity",
+        )
+        position_line, = position_axes.plot(
+            time_values,
+            frame[position_column],
+            color=color,
+            linestyle="--",
+            linewidth=1.6,
+            label=f"{label} position",
+        )
+        handles.extend((velocity_line, position_line))
+    tcp_axes.set_title("Recorded TCP trajectory")
+    tcp_axes.set_xlabel("Time (s)")
+    tcp_axes.set_ylabel("Velocity (m/s)")
+    position_axes.set_ylabel("Position from home (m)")
+    tcp_axes.grid(True, linestyle="--", alpha=0.5)
+    tcp_axes.legend(handles=handles, loc="best", fontsize=8, ncol=2)
 
     mu_values = np.asarray([result.mu for result in simulations])
     color_map = plt.colormaps["viridis"]
@@ -181,138 +346,147 @@ def build_analysis_plot(
     if color_min == color_max:
         color_max = color_min + 1e-9
     color_norm = plt.Normalize(vmin=color_min, vmax=color_max)
-    markers = []
-
-    all_positions = np.concatenate(
-        [result.positions for result in simulations], axis=0
-    )
+    flight_points = []
     for result in simulations:
-        mu = result.mu
-        color = color_map(color_norm(mu))
         positions = result.positions
         flight_axes.plot(
             positions[:, 0],
             positions[:, 1],
             positions[:, 2],
-            color=color,
-            linewidth=1.4,
-            alpha=0.8,
+            color=color_map(color_norm(result.mu)),
+            linewidth=1.0,
+            alpha=0.55,
         )
-        marker, = flight_axes.plot(
-            [positions[0, 0]],
-            [positions[0, 1]],
-            [positions[0, 2]],
-            marker="o",
-            color=color,
-            markersize=5,
-            linestyle="None",
-        )
-        markers.append(marker)
-
-        landing = result.impact
-        if landing is not None:
-            landing_axes.plot(
-                positions[:, 0],
-                positions[:, 1],
-                color=color,
-                linewidth=0.8,
-                alpha=0.3,
-            )
-            landing_axes.scatter(landing[0], landing[1], color=color, edgecolor="black")
-
+        flight_points.append(positions)
     flight_axes.scatter(
-        target[0], target[1], 0.0, marker="x", color="red", s=70, label="Target on ground"
+        target[0], target[1], 0.0, marker="x", color="red", s=60, label="Target XY"
     )
     flight_axes.scatter(
-        target[0], target[1], target[2], marker="*", color="red", s=90, label="3D target"
+        target[0],
+        target[1],
+        target[2],
+        marker="*",
+        color="red",
+        s=85,
+        label="Target reference",
     )
-    flight_axes.set_title("Simulated projectile trajectories")
+    flight_axes.set_title("Projectile flight by friction coefficient")
     flight_axes.set_xlabel("X (m)")
     flight_axes.set_ylabel("Y (m)")
     flight_axes.set_zlabel("Z (m)")
-    x_padding = max(0.05, 0.05 * float(np.ptp(all_positions[:, 0])))
-    y_extent = max(0.25, float(np.max(np.abs(all_positions[:, 1]))) * 1.1)
-    z_top = max(float(np.max(all_positions[:, 2])), float(target[2])) + 0.05
-    flight_axes.set_xlim(
-        min(float(np.min(all_positions[:, 0])), float(target[0])) - x_padding,
-        max(float(np.max(all_positions[:, 0])), float(target[0])) + x_padding,
+    flight_axes.set_proj_type("ortho")
+    flight_axes.view_init(elev=22, azim=-58)
+    set_equal_3d_limits(
+        flight_axes,
+        np.concatenate((*flight_points, target[None, :], np.array([[target[0], target[1], 0.0]]))),
     )
-    flight_axes.set_ylim(-y_extent, y_extent)
-    flight_axes.set_zlim(0.0, z_top)
-    flight_axes.legend(loc="upper left", fontsize=8)
-    flight_axes.set_box_aspect(
-        (
-            max(float(np.ptp(all_positions[:, 0])), 0.25),
-            max(2.0 * y_extent, 0.25),
-            max(z_top, 0.25),
-        )
-    )
-
-    landing_axes.scatter(
-        target[0], target[1], marker="x", color="red", s=90, label="Target on ground"
-    )
-    landing_axes.set_title("Ground impact locations (top view)")
-    landing_axes.set_xlabel("Impact X (m)")
-    landing_axes.set_ylabel("Impact Y (m)")
-    landing_axes.axis("equal")
-    landing_axes.grid(True, linestyle="--", alpha=0.5)
-    landing_axes.legend()
-    colorbar_axes = fig.add_axes((0.92, 0.57, 0.018, 0.28))
-    fig.colorbar(
-        plt.cm.ScalarMappable(norm=color_norm, cmap=color_map),
-        cax=colorbar_axes,
-        label="Gripper friction coefficient",
-    )
+    flight_axes.legend(loc="upper left", fontsize=7)
 
     landed = [result for result in simulations if result.impact is not None]
-    errors = []
-    for result in landed:
-        if result.impact is not None:
-            errors.append(float(np.linalg.norm(result.impact[:2] - target[:2])))
-    error_axes.plot(
-        [result.mu for result in landed],
-        np.asarray(errors) * 1000.0,
-        marker="o",
+    impact_positions = (
+        np.asarray([result.impact[:2] for result in landed])
+        if landed
+        else np.empty((0, 2))
     )
-    error_axes.axhline(0.0, color="red", linestyle="--", label="Target")
-    error_axes.set_title("Horizontal impact error by friction")
-    error_axes.set_xlabel("Gripper friction coefficient")
-    error_axes.set_ylabel("XY distance from target projection (mm)")
-    error_axes.grid(True, linestyle="--", alpha=0.5)
-
-    fig.subplots_adjust(
-        left=0.07,
-        right=0.88,
-        bottom=0.08,
-        top=0.9,
-        wspace=0.3,
-        hspace=0.3,
+    mean_impact = impact_positions.mean(axis=0) if len(impact_positions) else None
+    covariance = (
+        np.cov(impact_positions, rowvar=False, ddof=0)
+        if len(impact_positions) > 1
+        else np.zeros((2, 2))
     )
-    fig.savefig(output_path, dpi=160, bbox_inches="tight")
-
-    if show:
-        max_frames = max(len(result.positions) for result in simulations)
-
-        def animate(frame_index: int) -> list[object]:
-            for marker, result in zip(markers, simulations):
-                positions = result.positions
-                current = positions[min(frame_index, len(positions) - 1)]
-                marker.set_data([current[0]], [current[1]])
-                marker.set_3d_properties([current[2]])
-            return markers
-
-        playback = animation.FuncAnimation(
-            fig,
-            animate,
-            frames=max_frames,
-            interval=20,
-            blit=False,
-            repeat=False,
+    landing_axes.scatter(
+        target[0],
+        target[1],
+        marker="x",
+        color="red",
+        s=90,
+        label="Target on ground",
+    )
+    if landed:
+        landing_axes.scatter(
+            impact_positions[:, 0],
+            impact_positions[:, 1],
+            c=[result.mu for result in landed],
+            cmap=color_map,
+            norm=color_norm,
+            edgecolor="black",
+            linewidth=0.5,
+            s=45,
+            label="Projectile impacts",
         )
-        setattr(fig, "_trajectory_animation", playback)
-        plt.show()
+        landing_axes.scatter(
+            mean_impact[0],
+            mean_impact[1],
+            marker="*",
+            color="black",
+            edgecolor="white",
+            linewidth=0.8,
+            s=180,
+            label="Mean impact",
+            zorder=5,
+        )
+        if len(landed) > 1 and np.any(covariance):
+            eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+            order = np.argsort(eigenvalues)[::-1]
+            eigenvalues = np.maximum(eigenvalues[order], 0.0)
+            eigenvectors = eigenvectors[:, order]
+            angle = np.degrees(
+                np.arctan2(eigenvectors[1, 0], eigenvectors[0, 0])
+            )
+            landing_axes.add_patch(
+                Ellipse(
+                    mean_impact,
+                    width=2.0 * np.sqrt(eigenvalues[0]),
+                    height=2.0 * np.sqrt(eigenvalues[1]),
+                    angle=angle,
+                    fill=False,
+                    edgecolor="black",
+                    linestyle=":",
+                    linewidth=1.3,
+                    label="1-sigma covariance",
+                )
+            )
+
+        errors = mean_impact - target[:2]
+        distance_error = float(np.linalg.norm(errors))
+        stats = (
+            f"Impacts: {len(landed)}/{len(simulations)}\n"
+            f"Mean: ({mean_impact[0]:.3f}, {mean_impact[1]:.3f}) m\n"
+            f"Variance: X={covariance[0, 0]:.2e}, "
+            f"Y={covariance[1, 1]:.2e} m²\n"
+            f"Target error: X={errors[0] * 1000:+.1f}, "
+            f"Y={errors[1] * 1000:+.1f} mm\n"
+            f"Distance error: {distance_error * 1000:.1f} mm"
+        )
+        landing_axes.text(
+            0.03,
+            0.97,
+            stats,
+            transform=landing_axes.transAxes,
+            va="top",
+            fontsize=8,
+            bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.9},
+        )
     else:
-        plt.close(fig)
+        landing_axes.text(
+            0.03,
+            0.97,
+            f"No impacts detected ({len(simulations)} trials)",
+            transform=landing_axes.transAxes,
+            va="top",
+            fontsize=9,
+            bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.9},
+        )
+    landing_axes.set_xlabel("Impact X (m)")
+    landing_axes.set_ylabel("Impact Y (m)")
+    landing_axes.set_title("Ground impact distribution (XY)")
+    landing_axes.set_aspect("equal", adjustable="datalim")
+    landing_axes.grid(True, linestyle="--", alpha=0.5)
+    landing_axes.legend(loc="lower right", fontsize=8)
+
+    figure.subplots_adjust(left=0.07, right=0.96, bottom=0.08, top=0.88, wspace=0.38)
+    figure.savefig(output_path, dpi=160, bbox_inches="tight")
+    return figure
 
 
 def evaluate_and_plot(
@@ -343,13 +517,7 @@ def evaluate_and_plot(
         target_pos=tuple(target),
         omega_motor=omega_motor,
     )
-    ground_geom_id = mujoco.mj_name2id(env.model, mujoco.mjtObj.mjOBJ_GEOM, "ground")
-    projectile_geom_id = mujoco.mj_name2id(
-        env.model, mujoco.mjtObj.mjOBJ_GEOM, "proj_geom"
-    )
-    if ground_geom_id < 0 or projectile_geom_id < 0:
-        raise ValueError("MuJoCo scene must define geoms named 'ground' and 'proj_geom'")
-
+    model = env.model
     actions = frame.loc[:, ACTION_COLUMNS].to_numpy(dtype=np.float64)
     simulations = [
         simulate_trajectory(
@@ -357,12 +525,15 @@ def evaluate_and_plot(
             actions=actions,
             friction=float(mu),
             max_flight_seconds=max_flight_seconds,
-            ground_geom_id=ground_geom_id,
-            projectile_geom_id=projectile_geom_id,
             seed=0,
         )
         for mu in np.linspace(mu_min, mu_max, mu_count)
     ]
+    try:
+        reference_mu = float(metadata.get("Friction_Coefficient", 0.3))
+    except ValueError as error:
+        raise ValueError("Invalid Friction_Coefficient value in trajectory metadata") from error
+    animated_result = min(simulations, key=lambda result: abs(result.mu - reference_mu))
     env.close()
 
     rows = []
@@ -393,18 +564,27 @@ def evaluate_and_plot(
     result_csv = result_dir / f"{path.stem}_impacts.csv"
     result_plot = result_dir / f"{path.stem}_analysis.png"
     results.to_csv(result_csv, index=False, float_format="%.6f")
-    build_analysis_plot(
+
+    animation_figure = None
+    if show:
+        animation_figure, _ = build_animation_window(model, animated_result)
+    analysis_figure = build_analysis_plot(
         frame=frame,
         target=target,
         simulations=simulations,
         trajectory_name=path.name,
         output_path=result_plot,
-        show=show,
     )
+    if show:
+        plt.show()
+    else:
+        plt.close(analysis_figure)
+        if animation_figure is not None:
+            plt.close(animation_figure)
 
     landed_results = results.loc[results["landed"]]
     print(f"Trajectory: {path}")
-    print(f"Target: ({target[0]:.3f}, {target[1]:.3f}, {target[2]:.3f}) m")
+    print(f"Target XY: ({target[0]:.3f}, {target[1]:.3f}) m")
     print(f"Replayed command samples: {len(frame)}")
     print(f"Ground impacts: {len(landed_results)}/{len(results)}")
     if not landed_results.empty:
@@ -446,7 +626,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-show",
         action="store_true",
-        help="Save the plot and impact CSV without opening an animation window.",
+        help="Save the plot and impact CSV without opening the GUI windows.",
     )
     return parser.parse_args()
 

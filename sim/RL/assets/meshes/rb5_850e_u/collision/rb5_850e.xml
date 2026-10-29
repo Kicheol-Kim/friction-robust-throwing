@@ -12,31 +12,37 @@
   </asset>
 
   <worldbody>
-    <geom type="mesh" mesh="link0"/>
-    <body name="link1" pos="0 0 0.1692">
+    <geom type="mesh" mesh="link0" material="mat_robot_base"/>
+    <body name="link1" pos="0 0 0.1692" gravcomp="1">
       <inertial pos="5.7e-05 -0.005795 -0.034516" quat="0.676677 0.181125 -0.183239 0.689729" mass="4.147" diaginertia="0.00940157 0.00878691 0.0073332"/>
       <joint name="base" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-10 10"/>
-      <geom type="mesh" mesh="link1"/>
-      <body name="link2">
+      <geom type="mesh" mesh="link1" material="mat_robot_light"/>
+      <body name="link2" gravcomp="1">
         <inertial pos="-3.7e-05 -0.121603 0.212933" quat="0.999997 0.000348233 7.80187e-05 -0.00223104" mass="9.633" diaginertia="0.392214 0.388915 0.0219492"/>
         <joint name="shoulder" pos="0 0 0" axis="0 1 0" range="-3.14 3.14" actuatorfrcrange="-10 10"/>
-        <geom type="mesh" mesh="link2"/>
-        <body name="link3" pos="0 0 0.425">
+        <geom type="mesh" mesh="link2" material="mat_robot_blue"/>
+        <body name="link3" pos="0 0 0.425" gravcomp="1">
           <inertial pos="2.1e-05 -0.015845 0.202568" quat="0.999948 0.0100341 -5.40187e-05 -0.00170427" mass="3.915" diaginertia="0.11204 0.111832 0.0075271"/>
           <joint name="elbow" pos="0 0 0" axis="0 1 0" range="-3.14 3.14" actuatorfrcrange="-10 10"/>
-          <geom type="mesh" mesh="link3"/>
-          <body name="link4" pos="0 0 0.392">
+          <geom type="mesh" mesh="link3" material="mat_robot_light"/>
+          <body name="link4" pos="0 0 0.392" gravcomp="1">
             <inertial pos="5.7e-05 -0.106332 0.025881" quat="0.986693 0.162394 -0.00142514 0.00799378" mass="1.452" diaginertia="0.00162904 0.00160108 0.00118182"/>
             <joint name="wrist1" pos="0 0 0" axis="0 1 0" range="-3.14 3.14" actuatorfrcrange="-10 10"/>
-            <geom type="mesh" mesh="link4"/>
-            <body name="link5" pos="0 -0.1107 0.1107">
+            <geom type="mesh" mesh="link4" material="mat_robot_dark"/>
+            <body name="link5" pos="0 -0.1107 0.1107" gravcomp="1">
               <inertial pos="-2.8e-05 -0.025911 -0.004363" quat="0.812497 0.582798 -0.00662653 0.0123056" mass="1.454" diaginertia="0.00163147 0.00160354 0.00118381"/>
               <joint name="wrist2" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" actuatorfrcrange="-10 10"/>
-              <geom type="mesh" mesh="link5"/>
-              <body name="link6">
+              <geom type="mesh" mesh="link5" material="mat_robot_light"/>
+              <body name="link6" gravcomp="1">
                 <inertial pos="-2e-06 -0.079964 -0.000494" quat="0.706709 -0.0427371 -0.0387873 0.705146" mass="0.243" diaginertia="0.000243707 0.000147897 0.000142261"/>
                 <joint name="wrist3" pos="0 0 0" axis="0 1 0" range="-3.14 3.14" actuatorfrcrange="-10 10"/>
-                <geom type="mesh" mesh="link6"/>
+                <geom type="mesh" mesh="link6" material="mat_robot_blue"/>
+                <body name="thrower_assembly" pos="0.5 0.1107 -0.5969">
+                  <joint name="ak60_motor" type="hinge" axis="0 0 1" damping="0.05" frictionloss="0.01"/>
+                  <geom name="gripper_bottom" type="box" size="0.15 0.025 0.004" pos="0.15 0 -0.004" material="mat_gripper" friction="0.3 0.01 0.0001"/>
+                  <geom name="gripper_left" type="box" size="0.15 0.004 0.021" pos="0.15 0.021 0.021" material="mat_gripper" friction="0.3 0.01 0.0001"/>
+                  <geom name="gripper_right" type="box" size="0.15 0.004 0.021" pos="0.15 -0.021 0.021" material="mat_gripper" friction="0.3 0.01 0.0001"/>
+                </body>
               </body>
             </body>
           </body>

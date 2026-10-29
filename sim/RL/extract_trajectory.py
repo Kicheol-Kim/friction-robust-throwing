@@ -1,7 +1,6 @@
 import os
 import csv
 import datetime
-import numpy as np
 from stable_baselines3 import PPO
 
 # 무조코 환경 임포트
@@ -22,9 +21,14 @@ def extract_and_save_trajectory():
         omega_motor=motor_target_speed
     )
     
-    model_path = os.path.join(os.path.dirname(__file__), "models", "ppo_throwing_model")
+    model_path = os.path.join(
+        os.path.dirname(__file__), "models", "ppo_throwing_fixed_tcp"
+    )
     if not os.path.exists(model_path + ".zip"):
-        print("❌ 저장된 모델을 찾을 수 없습니다. main_mujoco_ppo.py를 먼저 실행하세요.")
+        print(
+            "❌ 고정 자세 모델을 찾을 수 없습니다. "
+            "main_mujoko_ppo.py를 먼저 실행하세요."
+        )
         return
         
     model = PPO.load(model_path)
@@ -34,11 +38,11 @@ def extract_and_save_trajectory():
     done = False
     
     while not done:
-        action, _states = model.predict(obs, deterministic=True)
+        action, _ = model.predict(obs, deterministic=True)
         
         curr_time = env.steps * env.dt
-        curr_tcp_pos = env.tcp_pos.copy()
-        curr_tcp_vel = env.tcp_vel.copy()
+        curr_tcp_pos = env.get_tcp_position()
+        curr_tcp_vel = env.get_tcp_velocity()
         cmd_vel = action.copy()
         curr_motor_pos = obs[6]
         curr_motor_vel = obs[7]
@@ -52,7 +56,7 @@ def extract_and_save_trajectory():
         ]
         log_data.append(row)
         
-        obs, reward, terminated, truncated, info = env.step(action)
+        obs, _, terminated, truncated, info = env.step(action)
         done = terminated or truncated
 
     metadata = {
@@ -60,6 +64,7 @@ def extract_and_save_trajectory():
         "Environment": "3D_MujocoThrowingEnv",
         "Algorithm": "PPO",
         "Target_Pos_XYZ": str(target_3d_pos),
+        "TCP_Orientation": "Fixed world orientation; throwing plane parallel to XY",
         "Motor_Omega_Rads": motor_target_speed,
         "Friction_Coefficient": info.get("mu", 0.3),
         "Control_Frequency_Hz": int(1.0 / env.dt),

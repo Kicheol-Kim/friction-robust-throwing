@@ -10,7 +10,7 @@ def main():
     print(" 🚀 3D MuJoCo 기반 마찰 강인 투척 PPO 학습 시작")
     print("=========================================================")
     
-    # [수정됨] 목표 지점을 X, Y, Z 3차원 좌표로 설정 (예: 거리 1.65m, 중심축 0.0m, 높이 0.5m 타겟)
+    # XY is the ground-impact target; Z is retained as the target reference height.
     env = MujocoThrowingEnv(
         mu_range=(0.1, 0.5), 
         target_pos=(1.65, 0.0, 0.5), 
@@ -32,12 +32,16 @@ def main():
     
     checkpoint_dir = os.path.join(os.path.dirname(__file__), "models")
     os.makedirs(checkpoint_dir, exist_ok=True)
-    checkpoint_callback = CheckpointCallback(save_freq=10000, save_path=checkpoint_dir, name_prefix="ppo_throw")
+    checkpoint_callback = CheckpointCallback(
+        save_freq=10000,
+        save_path=checkpoint_dir,
+        name_prefix="ppo_throwing_fixed_tcp",
+    )
     
     start_time = time.time()
     model.learn(total_timesteps=30_000, callback=checkpoint_callback)
     
-    final_model_path = os.path.join(checkpoint_dir, "ppo_throwing_model")
+    final_model_path = os.path.join(checkpoint_dir, "ppo_throwing_fixed_tcp")
     model.save(final_model_path)
     
     elapsed_time = time.time() - start_time
